@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>จัดการระบบ - Secondhand RSU</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/js/tw-config.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body class="bg-ink-50 font-sans text-ink-900">
+  <header id="nav" class="border-b border-rsu-100 bg-white"></header>
+  <main class="mx-auto max-w-6xl px-4 py-8">
+    <h1 class="font-display text-2xl text-ink-700">Admin Management Dashboard</h1>
+    <div id="loadError" role="alert" class="mt-3 hidden rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800"></div>
+    <div id="authNotice" role="status" class="mt-3 hidden rounded-lg border border-rsu-200 bg-rsu-100 px-4 py-2 text-sm text-ink-700">
+      กรุณาเข้าสู่ระบบด้วยบัญชี Admin เพื่อจัดการระบบ <a href="/login.html" class="font-medium text-rsu-700 underline">เข้าสู่ระบบ</a>
+    </div>
+
+    <section class="mt-5 grid gap-4 sm:grid-cols-3" id="stats"></section>
+
+    <section id="productsPanel" class="mt-6 overflow-hidden rounded-xl border border-ink-100 bg-white">
+      <div class="flex items-center justify-between border-b border-ink-100 px-5 py-4">
+        <h2 class="font-medium">รายการสินค้าทั้งหมด</h2>
+        <select id="filter" class="rounded-lg border border-ink-100 px-3 py-1.5 text-sm">
+          <option value="all">ทั้งหมด</option><option value="pending">รออนุมัติ</option><option value="approved">อนุมัติแล้ว</option>
+        </select>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[820px] text-left text-sm">
+          <thead class="bg-ink-50 text-ink-500">
+            <tr><th class="px-5 py-3 font-medium">สินค้า</th><th class="px-3 py-3 font-medium">ผู้ขาย</th><th class="px-3 py-3 font-medium">หมวดหมู่</th>
+              <th class="px-3 py-3 font-medium">ราคา</th><th class="px-3 py-3 font-medium">สถานะ</th><th class="px-3 py-3 font-medium">การอนุมัติ</th><th class="px-5 py-3 text-right font-medium">จัดการ</th></tr>
+          </thead>
+          <tbody id="rows" class="divide-y divide-ink-100"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="categoriesPanel" class="mt-6 rounded-xl border border-ink-100 bg-white p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-medium">จัดการหมวดหมู่</h2>
+          <p class="mt-1 text-sm text-ink-500">หมวดหมู่ที่ใช้อยู่กับสินค้าไม่สามารถลบได้</p>
+        </div>
+        <form id="categoryForm" class="flex gap-2">
+          <input name="category_name" required maxlength="80" placeholder="ชื่อหมวดหมู่" class="rounded-lg border border-ink-100 px-3 py-2 text-sm">
+          <button class="rounded-lg bg-rsu-600 px-4 py-2 text-sm font-medium text-white">เพิ่ม</button>
+        </form>
+      </div>
+      <ul id="categories" class="mt-4 divide-y divide-ink-100"></ul>
+    </section>
+  </main>
+
+  <script src="/js/app.js"></script>
+  <script>
+    renderNav();
+    let rows = [], categoryRows = [], stats = null;
+    const loadError = document.getElementById('loadError');
+
+    function statCard(label, value, tone) {
+      return `<div class="rounded-xl border border-ink-100 bg-white p-5">
+        <p class="text-sm text-ink-500">${label}</p><p class="mt-1 font-display text-3xl ${tone}">${value}</p></div>`;
+    }
+    function drawStats() {
+      if (!stats) return;
+      document.getElementById('stats').innerHTML =
+        statCard('Total Products', stats.total_products, 'text-ink-700') +
+        statCard('Active Users', stats.active_users, 'text-ink-700') +
+        statCard('Pending Approvals', stats.pending_approvals, 'text-rsu-600');
+    }
+    function draw() {
+      const f = filter.value;
+      const list = rows.filter((r) => f === 'all' || (f === 'pending' ? !r.is_approved : r.is_approved));
+      document.getElementById('rows').innerHTML = list.length ? list.map((r) => `
+        <tr class="hover:bg-rsu-50/50">
+          <td class="px-5 py-3 font-medium">${esc(r.title)}</td>
+          <td class="px-3 py-3">${esc(r.seller_name)}</td>
+          <td class="px-3 py-3"><span class="rounded-full bg-rsu-100 px-2.5 py-0.5 text-xs text-rsu-700">${esc(r.category_name)}</span></td>
+          <td class="px-3 py-3">${baht(r.price)}</td>
+          <td class="px-3 py-3"><span class="status-pill ${r.status === 'Sold' ? 'status-sold' : 'status-available'}">${r.status}</span></td>
+          <td class="px-3 py-3">${r.is_approved ? '<span class="text-ink-700">อนุมัติแล้ว</span>' : '<span class="font-medium text-rsu-600">รออนุมัติ</span>'}</td>
+          <td class="whitespace-nowrap px-5 py-3 text-right">
+            ${r.is_approved ? '' : `<button data-a="approve" data-id="${r.product_id}" class="rounded-md bg-rsu-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rsu-700">อนุมัติ</button>`}
+            <button data-a="status" data-id="${r.product_id}" class="ml-1 rounded-md border border-ink-100 px-3 py-1.5 text-xs text-ink-700 hover:bg-ink-50">เปลี่ยนสถานะ</button>
+            <button data-a="delete" data-id="${r.product_id}" class="ml-1 rounded-md border border-rsu-200 px-3 py-1.5 text-xs text-rsu-700 hover:bg-rsu-50">ลบโพสต์</button>
+          </td>
+        </tr>`).join('') : '<tr><td colspan="7" class="px-5 py-10 text-center text-ink-500">ไม่มีรายการในตัวกรองนี้</td></tr>';
+      drawStats();
+    }
+
+    function drawCategories() {
+      document.getElementById('categories').innerHTML = categoryRows.length
+        ? categoryRows.map((category) => `
+          <li class="flex items-center justify-between gap-3 py-3">
+            <span>${esc(category.category_name)}</span>
+            <span class="flex gap-2">
+              <button type="button" data-category-action="edit" data-id="${category.category_id}" class="rounded-md border border-ink-100 px-3 py-1.5 text-xs">แก้ไข</button>
+              <button type="button" data-category-action="delete" data-id="${category.category_id}" class="rounded-md border border-red-200 px-3 py-1.5 text-xs text-red-700">ลบ</button>
+            </span>
+          </li>`).join('')
+        : '<li class="py-3 text-sm text-ink-500">ยังไม่มีหมวดหมู่</li>';
+    }
+
+    async function loadDashboard() {
+      try {
+        const [loadedRows, loadedStats, loadedCategories] = await Promise.all([
+          api('/admin/products'),
+          api('/admin/stats'),
+          api('/products/categories'),
+        ]);
+        rows = loadedRows;
+        stats = loadedStats;
+        categoryRows = loadedCategories;
+        loadError.classList.add('hidden');
+        draw();
+        drawCategories();
+      } catch (error) {
+        rows = [];
+        document.getElementById('rows').innerHTML = '';
+        document.getElementById('stats').innerHTML = '';
+        document.getElementById('categories').innerHTML = '';
+        loadError.textContent = `โหลดข้อมูล Admin ไม่สำเร็จ: ${error.message} กรุณาเข้าสู่ระบบด้วยบัญชี Admin และลองใหม่`;
+        loadError.classList.remove('hidden');
+      }
+    }
+
+    document.getElementById('rows').onclick = async (e) => {
+      const b = e.target.closest('button[data-a]'); if (!b) return;
+      const id = Number(b.dataset.id), a = b.dataset.a, row = rows.find((r) => r.product_id === id);
+      if (!row) return;
+      if (a === 'delete' && !confirm(`ลบโพสต์ "${row.title}" ใช่หรือไม่? การลบย้อนกลับไม่ได้`)) return;
+      try {
+        if (a === 'approve') await api(`/admin/products/${id}/approve`, { method: 'PATCH' });
+        if (a === 'status') await api(`/admin/products/${id}/status`, { method: 'PATCH' });
+        if (a === 'delete') await api(`/admin/products/${id}`, { method: 'DELETE' });
+        toast(a === 'approve' ? 'อนุมัติแล้ว' : a === 'status' ? 'เปลี่ยนสถานะแล้ว' : 'ลบโพสต์แล้ว');
+        await loadDashboard();
+      } catch (x) { toast(x.message, 'err'); }
+    };
+    filter.onchange = draw;
+
+    document.getElementById('categoryForm').onsubmit = async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      try {
+        await api('/admin/categories', { method: 'POST', body: { category_name: form.elements.category_name.value } });
+        form.reset();
+        toast('เพิ่มหมวดหมู่แล้ว');
+        await loadDashboard();
+      } catch (error) { toast(error.message, 'err'); }
+    };
+
+    document.getElementById('categories').onclick = async (event) => {
+      const button = event.target.closest('button[data-category-action]');
+      if (!button) return;
+      const id = Number(button.dataset.id);
+      const category = categoryRows.find((item) => item.category_id === id);
+      if (!category) return;
+      const action = button.dataset.categoryAction;
+      if (action === 'delete' && !confirm(`ลบหมวดหมู่ "${category.category_name}" ใช่หรือไม่?`)) return;
+      try {
+        if (action === 'edit') {
+          const category_name = prompt('แก้ไขชื่อหมวดหมู่', category.category_name);
+          if (category_name === null) return;
+          await api(`/admin/categories/${id}`, { method: 'PUT', body: { category_name } });
+        } else {
+          await api(`/admin/categories/${id}`, { method: 'DELETE' });
+        }
+        toast(action === 'edit' ? 'แก้ไขหมวดหมู่แล้ว' : 'ลบหมวดหมู่แล้ว');
+        await loadDashboard();
+      } catch (error) { toast(error.message, 'err'); }
+    };
+
+    const currentUser = store.user;
+    if (store.token && currentUser && currentUser.role === 'Admin') {
+      loadDashboard();
+    } else {
+      document.getElementById('authNotice').classList.remove('hidden');
+      document.getElementById('stats').classList.add('hidden');
+      document.getElementById('productsPanel').classList.add('hidden');
+      document.getElementById('categoriesPanel').classList.add('hidden');
+    }
+  </script>
+</body>
+</html>

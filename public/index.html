@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Secondhand RSU - ตลาดสินค้ามือสองนักศึกษา ม.รังสิต</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/js/tw-config.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body class="bg-rsu-50/40 font-sans text-ink-900">
+  <header id="nav" class="sticky top-0 z-30 border-b border-rsu-100 bg-white"></header>
+
+  <section class="bg-ink-700 text-white">
+    <div class="mx-auto max-w-6xl px-4 py-8">
+      <h1 class="font-display text-2xl sm:text-3xl">ของที่เพื่อนไม่ใช้แล้ว อาจเป็นของที่คุณกำลังหา</h1>
+      <p class="mt-2 max-w-xl text-sm text-ink-100">ตลาดซื้อขายหนังสือ อุปกรณ์ไอที เสื้อผ้า และของใช้หอพัก สำหรับนักศึกษามหาวิทยาลัยรังสิต · เบอร์โทรแสดงเฉพาะผู้ขายที่ยินยอม</p>
+    </div>
+  </section>
+
+  <main class="mx-auto max-w-6xl px-4 py-6">
+    <div id="loadError" role="alert" class="mb-4 hidden rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+      โหลดข้อมูลจากระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง
+    </div>
+    <div id="chips" class="mb-5 flex flex-wrap gap-2"></div>
+    <p id="count" class="mb-3 text-sm text-ink-500"></p>
+    <div id="grid" class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+    <div id="empty" class="hidden rounded-xl border border-dashed border-rsu-200 bg-white p-10 text-center">
+      <p class="font-medium">ยังไม่พบสินค้าที่ตรงกับคำค้นหา</p>
+      <p class="mt-1 text-sm text-ink-500">ลองเปลี่ยนคำค้นหา หรือลงประกาศขายของของคุณเอง</p>
+      <a href="/create-product.html" class="mt-4 inline-block rounded-lg bg-rsu-600 px-4 py-2 text-sm font-medium text-white">+ ลงประกาศขาย</a>
+    </div>
+  </main>
+
+  <footer class="mt-10 border-t border-rsu-100 bg-white py-6 text-center text-sm text-ink-500">
+    Secondhand RSU โปรเจกต์รายวิชา DIT204/DIT205 โดย นายรัชพล ลาภรวย (6604729)
+  </footer>
+
+  <script src="/js/app.js"></script>
+  <script>
+    renderNav({ search: true });
+    let categories = [], activeCat = '';
+
+    function card(p) {
+      const sold = p.status === 'Sold';
+      const currentUser = store.user;
+      const canChat = !currentUser || currentUser.user_id !== p.user_id;
+      const chatPath = `/chat.html?product_id=${encodeURIComponent(p.product_id)}`;
+      const chatHref = currentUser ? chatPath : `/login.html?next=${encodeURIComponent(chatPath)}`;
+      return `
+      <article class="overflow-hidden rounded-xl border border-ink-100 bg-white ${sold ? 'opacity-75' : ''}">
+        <div class="relative aspect-[4/3] bg-rsu-100">
+          <img src="${esc(p.image_url || placeholder(p.category_name))}" alt="${esc(p.title)}" class="h-full w-full object-cover ${sold ? 'grayscale' : ''}" loading="lazy">
+          <span class="absolute left-3 top-3 status-pill ${sold ? 'status-sold' : 'status-available'}">${sold ? 'Sold' : 'Available'}</span>
+        </div>
+        <div class="p-4">
+          <span class="rounded-full bg-rsu-100 px-2.5 py-0.5 text-xs font-medium text-rsu-700">${esc(p.category_name)}</span>
+          <h3 class="mt-2 line-clamp-2 min-h-[2.75rem] font-medium leading-snug">${esc(p.title)}</h3>
+          <p class="mt-2 font-display text-xl text-rsu-600">${baht(p.price)}</p>
+          <div class="mt-2 border-t border-ink-100 pt-2 text-sm text-ink-500">
+            <p>ผู้ขาย: ${esc(p.seller_name)}</p>
+            ${p.contact_phone ? `<p class="mt-1 break-words">ช่องทางติดต่อ: ${esc(p.contact_phone)}</p>` : '<p class="mt-1 text-xs">ผู้ขายยังไม่ได้ระบุช่องทางติดต่อ</p>'}
+            ${p.seller_phone ? `<p class="mt-1">เบอร์โทรผู้ขาย: <a class="font-medium text-rsu-700 underline" href="tel:${esc(p.seller_phone)}">${esc(p.seller_phone)}</a></p>` : ''}
+          </div>
+          ${canChat && !sold ? `<a href="${chatHref}" class="mt-4 inline-flex rounded-lg border border-rsu-600 px-4 py-2 text-sm font-medium text-rsu-700 hover:bg-rsu-50">ทักแชทผู้ขาย</a>` : ''}
+        </div>
+      </article>`;
+    }
+
+    function renderChips() {
+      const all = [{ category_id: '', category_name: 'ทั้งหมด' }, ...categories];
+      document.getElementById('chips').innerHTML = all.map((c) => `
+        <button data-id="${c.category_id}" class="rounded-full border px-4 py-1.5 text-sm ${String(c.category_id) === String(activeCat)
+          ? 'border-rsu-600 bg-rsu-600 text-white' : 'border-ink-100 bg-white text-ink-700 hover:border-rsu-400'}">${esc(c.category_name)}</button>`).join('');
+      document.querySelectorAll('#chips button').forEach((b) => (b.onclick = () => { activeCat = b.dataset.id; renderChips(); load(); }));
+    }
+
+    function draw(list) {
+      document.getElementById('grid').innerHTML = list.map(card).join('');
+      document.getElementById('empty').classList.toggle('hidden', list.length > 0);
+      document.getElementById('count').textContent = `พบสินค้า ${list.length} รายการ`;
+    }
+
+    async function load() {
+      const q = document.getElementById('q').value.trim();
+      const qs = new URLSearchParams({ ...(q && { q }), ...(activeCat && { category: activeCat }) });
+      try {
+        draw(await api('/products?' + qs));
+        document.getElementById('loadError').classList.add('hidden');
+      } catch (error) {
+        document.getElementById('grid').innerHTML = '';
+        document.getElementById('empty').classList.add('hidden');
+        document.getElementById('count').textContent = '';
+        document.getElementById('loadError').textContent = `โหลดรายการสินค้าไม่สำเร็จ: ${error.message}`;
+        document.getElementById('loadError').classList.remove('hidden');
+      }
+    }
+
+    (async () => {
+      try {
+        categories = await api('/products/categories');
+        renderChips();
+        await load();
+      } catch (error) {
+        document.getElementById('loadError').textContent = `โหลดหมวดหมู่ไม่สำเร็จ: ${error.message}`;
+        document.getElementById('loadError').classList.remove('hidden');
+      }
+      let t; document.getElementById('q').oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
+    })();
+  </script>
+</body>
+</html>

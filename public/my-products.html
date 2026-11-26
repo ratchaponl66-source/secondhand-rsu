@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ประกาศของฉัน - Secondhand RSU</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/js/tw-config.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body class="bg-rsu-50/40 font-sans text-ink-900">
+  <header id="nav" class="border-b border-rsu-100 bg-white"></header>
+  <main class="mx-auto max-w-5xl px-4 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="font-display text-2xl text-ink-700">ประกาศของฉัน</h1>
+        <p class="mt-1 text-sm text-ink-500">จัดการรายละเอียด สถานะ และการลบประกาศของคุณ</p>
+      </div>
+      <a href="/create-product.html" class="rounded-lg bg-rsu-600 px-4 py-2 text-sm font-medium text-white hover:bg-rsu-700">+ ลงประกาศใหม่</a>
+    </div>
+    <div id="authNotice" class="mt-5 hidden rounded-lg border border-rsu-200 bg-rsu-100 px-4 py-3 text-sm text-rsu-800">
+      กรุณาเข้าสู่ระบบเพื่อดูประกาศของคุณ <a href="/login.html" class="font-medium underline">เข้าสู่ระบบ</a>
+    </div>
+    <section id="phoneSettings" class="mt-5 hidden border border-ink-100 bg-white p-4">
+      <label class="flex items-start gap-3 text-sm">
+        <input id="phoneVisibility" type="checkbox" class="mt-1 accent-rsu-600">
+        <span><strong>แสดงเบอร์โทรในประกาศที่เผยแพร่</strong><span class="mt-1 block text-ink-500">หากไม่เลือก เบอร์โทรจากบัญชีจะซ่อนจากหน้าตลาด คุณเปลี่ยนการตั้งค่านี้ได้ทุกเมื่อ</span></span>
+      </label>
+      <p id="phoneStatus" class="mt-2 text-xs text-ink-500" role="status"></p>
+    </section>
+    <div id="loadError" role="alert" class="mt-5 hidden rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"></div>
+    <div id="rows" class="mt-5 space-y-4"></div>
+    <div id="empty" class="mt-5 hidden rounded-xl border border-dashed border-rsu-200 bg-white p-10 text-center">
+      <p class="font-medium">คุณยังไม่มีประกาศ</p>
+      <a href="/create-product.html" class="mt-3 inline-block rounded-lg bg-rsu-600 px-4 py-2 text-sm font-medium text-white">ลงประกาศชิ้นแรก</a>
+    </div>
+  </main>
+  <script src="/js/app.js"></script>
+  <script>
+    renderNav();
+    const rows = document.getElementById('rows');
+    const loadError = document.getElementById('loadError');
+    const empty = document.getElementById('empty');
+    const phoneSettings = document.getElementById('phoneSettings');
+    const phoneVisibility = document.getElementById('phoneVisibility');
+    const phoneStatus = document.getElementById('phoneStatus');
+    let products = [];
+    let categories = [];
+
+    function categoryOptions(selectedId) {
+      return categories.map((category) => `
+        <option value="${category.category_id}" ${Number(selectedId) === category.category_id ? 'selected' : ''}>${esc(category.category_name)}</option>
+      `).join('');
+    }
+
+    function draw() {
+      rows.innerHTML = products.map((product) => `
+        <article class="rounded-xl border border-ink-100 bg-white p-5">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h2 class="font-medium">${esc(product.title)}</h2>
+              <p class="mt-1 text-sm text-ink-500">${esc(product.category_name)} · ${baht(product.price)}</p>
+              <p class="mt-1 text-sm text-ink-500">${product.is_approved ? 'อนุมัติแล้ว' : 'รอ Admin อนุมัติ'} · ${esc(product.status)}</p>
+              ${product.contact_phone ? `<p class="mt-1 break-words text-sm text-ink-500">ช่องทางติดต่อ: ${esc(product.contact_phone)}</p>` : ''}
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" data-action="edit" data-id="${product.product_id}" class="rounded-lg border border-ink-100 px-3 py-2 text-sm hover:bg-ink-50">แก้ไข</button>
+              <button type="button" data-action="status" data-id="${product.product_id}" class="rounded-lg border border-ink-100 px-3 py-2 text-sm hover:bg-ink-50">เปลี่ยนเป็น ${product.status === 'Available' ? 'Sold' : 'Available'}</button>
+              <button type="button" data-action="delete" data-id="${product.product_id}" class="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50">ลบ</button>
+            </div>
+          </div>
+          <form data-edit-form="${product.product_id}" class="mt-4 hidden space-y-3 border-t border-ink-100 pt-4">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="text-sm">ชื่อสินค้า
+                <input name="title" required maxlength="120" value="${esc(product.title)}" class="mt-1 w-full rounded-lg border border-ink-100 px-3 py-2">
+              </label>
+              <label class="text-sm">หมวดหมู่
+                <select name="category_id" required class="mt-1 w-full rounded-lg border border-ink-100 bg-white px-3 py-2">${categoryOptions(product.category_id)}</select>
+              </label>
+              <label class="text-sm">ราคา (บาท)
+                <input name="price" type="number" min="0" step="any" required value="${esc(product.price)}" class="mt-1 w-full rounded-lg border border-ink-100 px-3 py-2">
+              </label>
+              <label class="text-sm">ช่องทางติดต่อ
+                <input name="contact_phone" value="${esc(product.contact_phone || '')}" class="mt-1 w-full rounded-lg border border-ink-100 px-3 py-2">
+              </label>
+            </div>
+            <label class="block text-sm">รายละเอียด
+              <textarea name="description" rows="3" class="mt-1 w-full rounded-lg border border-ink-100 px-3 py-2">${esc(product.description || '')}</textarea>
+            </label>
+            <label class="block text-sm">เปลี่ยนรูป (ไม่บังคับ, JPG/PNG/WEBP ไม่เกิน 3 MB)
+              <input name="image" type="file" accept="image/jpeg,image/png,image/webp" class="mt-1 block w-full text-sm">
+            </label>
+            <div class="flex gap-2">
+              <button class="rounded-lg bg-rsu-600 px-4 py-2 text-sm font-medium text-white">บันทึกการแก้ไข</button>
+              <button type="button" data-action="cancel-edit" class="rounded-lg border border-ink-100 px-4 py-2 text-sm">ยกเลิก</button>
+            </div>
+          </form>
+        </article>`).join('');
+      empty.classList.toggle('hidden', products.length > 0);
+    }
+
+    async function loadProducts() {
+      try {
+        const [loadedCategories, loadedProducts] = await Promise.all([
+          api('/products/categories'),
+          api('/products/mine'),
+        ]);
+        categories = loadedCategories;
+        products = loadedProducts;
+        loadError.classList.add('hidden');
+        draw();
+      } catch (error) {
+        rows.innerHTML = '';
+        empty.classList.add('hidden');
+        loadError.textContent = `โหลดประกาศไม่สำเร็จ: ${error.message}`;
+        loadError.classList.remove('hidden');
+      }
+    }
+
+    async function loadPhoneSettings() {
+      try {
+        const profile = await api('/auth/me');
+        phoneVisibility.checked = profile.phone_public === 1;
+        phoneStatus.textContent = phoneVisibility.checked
+          ? 'เบอร์โทรของคุณจะแสดงในประกาศที่เผยแพร่'
+          : 'เบอร์โทรของคุณถูกซ่อนจากหน้าตลาด';
+        phoneSettings.classList.remove('hidden');
+      } catch (error) {
+        loadError.textContent = `โหลดการตั้งค่าเบอร์โทรไม่สำเร็จ: ${error.message}`;
+        loadError.classList.remove('hidden');
+      }
+    }
+
+    phoneVisibility.onchange = async () => {
+      const desired = phoneVisibility.checked;
+      phoneVisibility.disabled = true;
+      try {
+        const result = await api('/auth/phone-visibility', { method: 'PATCH', body: { phone_public: desired } });
+        phoneVisibility.checked = result.phone_public === 1;
+        phoneStatus.textContent = phoneVisibility.checked
+          ? 'เบอร์โทรของคุณจะแสดงในประกาศที่เผยแพร่'
+          : 'เบอร์โทรของคุณถูกซ่อนจากหน้าตลาด';
+      } catch (error) {
+        phoneVisibility.checked = !desired;
+        toast(error.message, 'err');
+      } finally {
+        phoneVisibility.disabled = false;
+      }
+    };
+
+    if (!store.token) {
+      document.getElementById('authNotice').classList.remove('hidden');
+    } else {
+      loadPhoneSettings();
+      loadProducts();
+    }
+
+    rows.addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+      const action = button.dataset.action;
+      if (action === 'cancel-edit') {
+        button.closest('form').classList.add('hidden');
+        return;
+      }
+      const id = Number(button.dataset.id);
+      const product = products.find((item) => item.product_id === id);
+      if (!product) return;
+
+      if (action === 'edit') {
+        rows.querySelector(`[data-edit-form="${id}"]`).classList.toggle('hidden');
+        return;
+      }
+      if (action === 'delete' && !confirm(`ลบประกาศ "${product.title}" ใช่หรือไม่?`)) return;
+
+      try {
+        if (action === 'status') {
+          await api(`/products/${id}/status`, {
+            method: 'PATCH',
+            body: { status: product.status === 'Available' ? 'Sold' : 'Available' },
+          });
+          toast('เปลี่ยนสถานะแล้ว');
+        } else if (action === 'delete') {
+          await api(`/products/${id}`, { method: 'DELETE' });
+          toast('ลบประกาศแล้ว');
+        }
+        await loadProducts();
+      } catch (error) {
+        toast(error.message, 'err');
+      }
+    });
+
+    rows.addEventListener('submit', async (event) => {
+      const form = event.target.closest('form[data-edit-form]');
+      if (!form) return;
+      event.preventDefault();
+      const id = Number(form.dataset.editForm);
+      const data = new FormData(form);
+      const image = form.elements.image.files[0];
+      data.delete('image');
+      if (image && image.size > 0) {
+        if (!/^image\/(jpeg|png|webp)$/.test(image.type)) return toast('รองรับเฉพาะไฟล์ JPG, PNG, WEBP', 'err');
+        if (image.size > 3 * 1024 * 1024) return toast('ไฟล์ใหญ่เกิน 3 MB', 'err');
+        data.append('image', image);
+      }
+      try {
+        await api(`/products/${id}`, { method: 'PUT', body: data });
+        toast('อัปเดตประกาศแล้ว');
+        await loadProducts();
+      } catch (error) {
+        toast(error.message, 'err');
+      }
+    });
+  </script>
+</body>
+</html>

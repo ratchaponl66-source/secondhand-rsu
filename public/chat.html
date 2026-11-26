@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>แชท - Secondhand RSU</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/js/tw-config.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body class="bg-rsu-50/40 font-sans text-ink-900">
+  <header id="nav" class="border-b border-rsu-100 bg-white"></header>
+  <main class="mx-auto max-w-6xl px-4 py-8">
+    <div class="mb-5">
+      <h1 class="font-display text-2xl text-ink-700">ข้อความกับผู้ขาย</h1>
+      <p class="mt-1 text-sm text-ink-500">ถามรายละเอียดสินค้าและตอบกลับได้ที่นี่ นัดรับและปิดการขายเกิดขึ้นนอกระบบ ไม่มีตะกร้าหรือการชำระเงิน</p>
+    </div>
+    <div id="authNotice" class="hidden rounded-lg border border-rsu-200 bg-rsu-100 px-4 py-3 text-sm text-rsu-800">
+      กรุณาเข้าสู่ระบบเพื่อดูข้อความ <a href="/login.html" class="font-medium underline">เข้าสู่ระบบ</a>
+    </div>
+    <div id="loadError" role="alert" class="mb-4 hidden rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"></div>
+    <section id="chatLayout" class="hidden overflow-hidden border border-ink-100 bg-white">
+      <aside class="border-b border-ink-100 md:border-b-0 md:border-r" aria-label="รายการแชท">
+        <h2 class="border-b border-ink-100 px-4 py-3 text-base">รายการสนทนา</h2>
+        <div id="conversationList" class="conversation-list"></div>
+      </aside>
+      <div class="min-w-0">
+        <div id="chatHeading" class="border-b border-ink-100 px-5 py-3">
+          <h2 id="chatTitle" class="text-lg">เลือกห้องสนทนา</h2>
+          <p id="chatSubtitle" class="text-sm text-ink-500"></p>
+        </div>
+        <div id="chatEmpty" class="grid min-h-72 place-items-center px-6 text-center text-sm text-ink-500">
+          เลือกห้องสนทนาจากรายการ หรือเริ่มจากปุ่ม “ทักแชทผู้ขาย” บนหน้าสินค้า
+        </div>
+        <div id="messages" class="message-list hidden" aria-live="polite"></div>
+        <form id="messageForm" class="hidden gap-2 border-t border-ink-100 p-4">
+          <label class="sr-only" for="messageInput">ข้อความ</label>
+          <textarea id="messageInput" name="body" rows="2" maxlength="2000" required placeholder="พิมพ์ข้อความ (ไม่เกิน 2,000 ตัวอักษร)"
+            class="min-w-0 flex-1 resize-y rounded-lg border border-ink-100 px-3 py-2"></textarea>
+          <button class="self-end rounded-lg bg-rsu-600 px-4 py-2 text-sm font-medium text-white hover:bg-rsu-700">ส่ง</button>
+        </form>
+      </div>
+    </section>
+  </main>
+  <script src="/js/app.js"></script>
+  <script>
+    renderNav();
+    const authNotice = document.getElementById('authNotice');
+    const chatLayout = document.getElementById('chatLayout');
+    const conversationList = document.getElementById('conversationList');
+    const messagesEl = document.getElementById('messages');
+    const messageForm = document.getElementById('messageForm');
+    const messageInput = document.getElementById('messageInput');
+    const loadError = document.getElementById('loadError');
+    let conversations = [];
+    let selectedId = null;
+    let lastMessageId = 0;
+    let refreshing = false;
+
+    function showError(message) {
+      loadError.textContent = message;
+      loadError.classList.remove('hidden');
+    }
+
+    function drawConversations() {
+      if (!conversations.length) {
+        conversationList.innerHTML = '<p class="p-4 text-sm text-ink-500">ยังไม่มีข้อความสนทนา</p>';
+        return;
+      }
+      conversationList.innerHTML = conversations.map((item) => `
+        <button type="button" data-id="${item.conversation_id}" class="conversation-item ${item.conversation_id === selectedId ? 'conversation-active' : ''}">
+          <span class="block truncate font-medium">${esc(item.other_user_name)}</span>
+          <span class="mt-1 block truncate text-sm text-ink-500">${esc(item.title)}</span>
+          <span class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-500">
+            <span class="truncate">${esc(item.last_message || 'เริ่มบทสนทนา')}</span>
+            ${Number(item.unread_count) ? `<span class="unread-badge">ใหม่ ${Number(item.unread_count)}</span>` : ''}
+          </span>
+        </button>
+      `).join('');
+      conversationList.querySelectorAll('[data-id]').forEach((button) => {
+        button.onclick = () => selectConversation(Number(button.dataset.id))
+          .catch((error) => showError(`เปิดห้องสนทนาไม่สำเร็จ: ${error.message}`));
+      });
+    }
+
+    async function loadMessages(scrollToEnd = false) {
+      const conversationId = selectedId;
+      const result = await api(`/chats/${conversationId}/messages`);
+      if (selectedId !== conversationId) return;
+      document.getElementById('chatTitle').textContent = result.conversation.other_user_name;
+      document.getElementById('chatSubtitle').textContent = result.conversation.title;
+      document.getElementById('chatEmpty').classList.add('hidden');
+      messagesEl.classList.remove('hidden');
+      messageForm.classList.remove('hidden');
+      messageForm.classList.add('flex');
+      const newestId = result.messages.length ? result.messages[result.messages.length - 1].message_id : 0;
+      const hasNewMessage = newestId > lastMessageId;
+      messagesEl.innerHTML = result.messages.length ? result.messages.map((message) => `
+        <article class="message-row ${message.is_mine ? 'message-own' : ''}">
+          <div class="message-bubble">
+            <p class="mb-1 text-xs ${message.is_mine ? 'message-own-meta' : 'text-ink-500'}">${esc(message.sender_name)}</p>
+            <p class="whitespace-pre-wrap break-words">${esc(message.body)}</p>
+            <p class="mt-1 text-right text-xs ${message.is_mine ? 'message-own-meta' : 'text-ink-500'}">
+              ${esc(message.created_at)}${message.is_mine ? ` · ${message.read_at ? 'อ่านแล้ว' : 'ส่งแล้ว'}` : ''}
+            </p>
+          </div>
+        </article>
+      `).join('') : '<p class="m-auto text-center text-sm text-ink-500">ส่งข้อความแรกเพื่อเริ่มสนทนา</p>';
+      if (scrollToEnd || hasNewMessage) messagesEl.scrollTop = messagesEl.scrollHeight;
+      lastMessageId = newestId;
+    }
+
+    async function selectConversation(id) {
+      selectedId = id;
+      lastMessageId = 0;
+      drawConversations();
+      await loadMessages(true);
+      await loadConversations(false);
+    }
+
+    async function loadConversations(selectFirst = false) {
+      conversations = await api('/chats');
+      drawConversations();
+      if (selectFirst && conversations.length) await selectConversation(conversations[0].conversation_id);
+      if (!conversations.length && !selectedId) {
+        document.getElementById('chatEmpty').classList.remove('hidden');
+        messagesEl.classList.add('hidden');
+        messageForm.classList.add('hidden');
+      }
+    }
+
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        await loadConversations();
+        if (selectedId && conversations.some((item) => item.conversation_id === selectedId)) {
+          drawConversations();
+          await loadMessages();
+        } else if (selectedId) {
+          selectedId = null;
+          messagesEl.classList.add('hidden');
+          messageForm.classList.add('hidden');
+          document.getElementById('chatEmpty').classList.remove('hidden');
+        }
+        loadError.classList.add('hidden');
+      } catch (error) {
+        showError(`โหลดข้อความไม่สำเร็จ: ${error.message}`);
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    messageForm.onsubmit = async (event) => {
+      event.preventDefault();
+      const body = messageInput.value.trim();
+      if (!selectedId || !body) return;
+      const button = messageForm.querySelector('button');
+      button.disabled = true;
+      try {
+        await api(`/chats/${selectedId}/messages`, { method: 'POST', body: { body } });
+        messageInput.value = '';
+        await refresh();
+      } catch (error) {
+        showError(`ส่งข้อความไม่สำเร็จ: ${error.message}`);
+      } finally {
+        button.disabled = false;
+      }
+    };
+
+    (async () => {
+      if (!store.token) {
+        authNotice.classList.remove('hidden');
+        return;
+      }
+      chatLayout.classList.remove('hidden');
+      try {
+        const params = new URLSearchParams(location.search);
+        const productId = params.get('product_id');
+        const conversationId = Number(params.get('conversation'));
+        if (productId) {
+          const conversation = await api('/chats', { method: 'POST', body: { product_id: productId } });
+          selectedId = conversation.conversation_id;
+        } else if (Number.isSafeInteger(conversationId) && conversationId > 0) {
+          selectedId = conversationId;
+        }
+        await loadConversations();
+        if (selectedId && conversations.some((item) => item.conversation_id === selectedId)) {
+          await selectConversation(selectedId);
+        } else if (selectedId) {
+          selectedId = null;
+          showError('ไม่พบห้องสนทนานี้ หรือคุณไม่มีสิทธิ์เข้าถึง');
+        }
+      } catch (error) {
+        showError(`เปิดแชทไม่สำเร็จ: ${error.message}`);
+      }
+      window.setInterval(refresh, 5000);
+    })();
+  </script>
+</body>
+</html>

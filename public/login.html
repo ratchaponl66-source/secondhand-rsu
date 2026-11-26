@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>เข้าสู่ระบบ - Secondhand RSU</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/js/tw-config.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body class="bg-rsu-50/40 font-sans text-ink-900">
+  <header id="nav" class="border-b border-rsu-100 bg-white"></header>
+  <main class="mx-auto max-w-md px-4 py-10">
+    <div class="rounded-xl border border-ink-100 bg-white p-6">
+      <div class="mb-5 flex rounded-lg bg-ink-50 p-1 text-sm font-medium">
+        <button id="tabLogin" class="flex-1 rounded-md py-2">เข้าสู่ระบบ</button>
+        <button id="tabReg" class="flex-1 rounded-md py-2">สมัครสมาชิก</button>
+      </div>
+      <form id="f" class="space-y-4" novalidate>
+        <div data-reg><label class="mb-1 block text-sm">ชื่อ-นามสกุล</label><input name="name" autocomplete="name" class="w-full rounded-lg border border-ink-100 px-3 py-2 outline-none focus:border-rsu-400"></div>
+        <div><label class="mb-1 block text-sm">อีเมล</label><input name="email" type="email" required autocomplete="email" placeholder="student@rsu.ac.th" class="w-full rounded-lg border border-ink-100 px-3 py-2 outline-none focus:border-rsu-400"></div>
+        <div data-reg>
+          <label class="mb-1 block text-sm">เบอร์โทรศัพท์</label>
+          <input name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="0812345678" class="w-full rounded-lg border border-ink-100 px-3 py-2 outline-none focus:border-rsu-400">
+          <p class="mt-1 text-xs text-ink-500">กรอกเบอร์ไทย 9–10 หลัก โดยขึ้นต้นด้วย 0</p>
+        </div>
+        <label data-reg class="flex items-start gap-2 text-sm text-ink-700">
+          <input name="phone_public" type="checkbox" value="1" class="mt-1 accent-rsu-600">
+          <span>ยินยอมให้แสดงเบอร์โทรบนประกาศที่เผยแพร่ (หากไม่เลือก เบอร์จะไม่แสดงต่อสาธารณะ)</span>
+        </label>
+        <div><label id="passwordLabel" class="mb-1 block text-sm">รหัสผ่าน</label><input name="password" type="password" autocomplete="current-password" class="w-full rounded-lg border border-ink-100 px-3 py-2 outline-none focus:border-rsu-400"></div>
+        <p id="err" class="hidden text-sm text-rsu-700"></p>
+        <button id="submit" class="w-full rounded-lg bg-rsu-600 py-2.5 font-medium text-white hover:bg-rsu-700">เข้าสู่ระบบ</button>
+      </form>
+    </div>
+  </main>
+  <script src="/js/app.js"></script>
+  <script>
+    renderNav();
+    let mode = 'login';
+    const f = document.getElementById('f');
+    function setMode(m) {
+      mode = m;
+      document.querySelectorAll('[data-reg]').forEach((e) => e.classList.toggle('hidden', m === 'login'));
+      f.elements.name.required = m === 'reg';
+      f.elements.phone.required = m === 'reg';
+      f.elements.password.minLength = m === 'reg' ? 8 : 0;
+      f.elements.password.autocomplete = m === 'reg' ? 'new-password' : 'current-password';
+      document.getElementById('passwordLabel').textContent = m === 'reg' ? 'รหัสผ่าน (อย่างน้อย 8 ตัวอักษร)' : 'รหัสผ่าน';
+      if (m === 'login') f.elements.phone_public.checked = false;
+      err.classList.add('hidden');
+      document.getElementById('submit').textContent = m === 'login' ? 'เข้าสู่ระบบ' : 'สมัครสมาชิก';
+      const on = 'bg-white text-rsu-600 shadow-sm', off = 'text-ink-500';
+      document.getElementById('tabLogin').className = 'flex-1 rounded-md py-2 ' + (m === 'login' ? on : off);
+      document.getElementById('tabReg').className = 'flex-1 rounded-md py-2 ' + (m === 'reg' ? on : off);
+    }
+    tabLogin.onclick = () => setMode('login'); tabReg.onclick = () => setMode('reg'); setMode('login');
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      err.classList.add('hidden');
+      const body = Object.fromEntries(new FormData(f));
+      if (mode === 'reg') {
+        body.email = String(body.email || '').trim().toLowerCase();
+        if (!/^[^\s@]+@rsu\.ac\.th$/.test(body.email)) {
+          err.textContent = 'กรุณาใช้อีเมลมหาวิทยาลัยที่ลงท้ายด้วย @rsu.ac.th เท่านั้น';
+          err.classList.remove('hidden');
+          return;
+        }
+        const phone = String(body.phone || '').trim().replace(/[\s().-]/g, '');
+        const normalizedPhone = /^\+66\d{8,9}$/.test(phone) ? `0${phone.slice(3)}` : phone;
+        if (!/^0\d{8,9}$/.test(normalizedPhone)) {
+          err.textContent = 'รูปแบบเบอร์โทรไม่ถูกต้อง กรุณากรอกเบอร์ไทย 9–10 หลัก เช่น 0812345678';
+          err.classList.remove('hidden');
+          return;
+        }
+        body.phone = normalizedPhone;
+        body.phone_public = f.elements.phone_public.checked;
+      }
+      try {
+        const r = await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', body });
+        store.save(r.token, r.user);
+        const next = new URLSearchParams(location.search).get('next');
+        const safeNext = next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')
+          ? next
+          : (r.user.role === 'Admin' ? '/admin.html' : '/');
+        location.href = safeNext;
+      } catch (x) { err.textContent = x.message; err.classList.remove('hidden'); }
+    };
+  </script>
+</body>
+</html>
