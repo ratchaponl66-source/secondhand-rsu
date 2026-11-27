@@ -1,0 +1,51 @@
+CREATE TABLE IF NOT EXISTS users (
+  user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  phone TEXT,
+  phone_public INTEGER NOT NULL DEFAULT 0 CHECK (phone_public IN (0, 1)),
+  role TEXT NOT NULL DEFAULT 'User' CHECK (role IN ('User', 'Admin'))
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+  category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS products (
+  product_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  price REAL NOT NULL CHECK (price >= 0),
+  description TEXT,
+  category_id INTEGER NOT NULL REFERENCES categories(category_id),
+  status TEXT NOT NULL DEFAULT 'Available' CHECK (status IN ('Available', 'Sold')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  image_url TEXT,
+  contact_phone TEXT,
+  is_approved INTEGER NOT NULL DEFAULT 0 CHECK (is_approved IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+  buyer_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  seller_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (product_id, buyer_id, seller_id),
+  CHECK (buyer_id <> seller_id)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (length(trim(body)) BETWEEN 1 AND 2000),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  read_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_buyer ON conversations(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_seller ON conversations(seller_id);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_time ON messages(conversation_id, created_at);

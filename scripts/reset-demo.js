@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { resolveUploadPath } = require('../config/uploads');
 
 const demoDbPath = process.env.DEMO_DB_PATH;
 if (!demoDbPath) throw new Error('กำหนด DEMO_DB_PATH ให้ชัดเจนก่อน reset เพื่อป้องกันการแก้ฐานข้อมูลผิดไฟล์');
@@ -41,12 +42,9 @@ const reset = db.transaction(() => {
 });
 
 const result = reset();
-const uploadsDir = path.resolve(__dirname, '..', 'public', 'uploads');
 for (const { image_url: imageUrl } of result.images) {
-  if (!imageUrl || !imageUrl.startsWith('/uploads/')) continue;
-  const imagePath = path.resolve(uploadsDir, path.basename(imageUrl));
-  if (path.dirname(imagePath) !== uploadsDir) continue;
-  if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+  const imagePath = resolveUploadPath(imageUrl);
+  if (imagePath && fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
 }
 db.close();
 console.log(`Demo User accounts and related listings/chats removed: ${result.removed || 'nothing to remove'}`);

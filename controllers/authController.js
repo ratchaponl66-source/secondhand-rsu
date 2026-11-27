@@ -7,7 +7,7 @@ const sign = (u) =>
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   });
 
-exports.register = (req, res) => {
+exports.register = async (req, res) => {
   const { name, email, password, phone, phone_public: phonePublicInput } = req.body || {};
   if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' || typeof password !== 'string' || !password)
     return res.status(400).json({ message: 'กรอกชื่อ อีเมล และรหัสผ่านให้ครบ' });
@@ -23,35 +23,43 @@ exports.register = (req, res) => {
     : compactPhone;
   if (!/^0\d{8,9}$/.test(normalizedPhone))
     return res.status(400).json({ message: 'รูปแบบเบอร์โทรไม่ถูกต้อง กรุณากรอกเบอร์ไทย 9–10 หลัก เช่น 0812345678' });
-  if (db.prepare('SELECT 1 FROM users WHERE email=?').get(mail))
+  if (await db.get('SELECT 1 FROM users WHERE email=?', [mail]))
     return res.status(409).json({ message: 'อีเมลนี้ถูกใช้งานแล้ว' });
   const phonePublic = phonePublicInput === true || phonePublicInput === 1 || phonePublicInput === '1' || phonePublicInput === 'true';
-  const info = db
-    .prepare("INSERT INTO users (name,email,password_hash,phone,phone_public,role) VALUES (?,?,?,?,?,'User')")
-    .run(name.trim(), mail, bcrypt.hashSync(password, 10), normalizedPhone, phonePublic ? 1 : 0);
-  const user = { user_id: info.lastInsertRowid, name: name.trim(), role: 'User' };
+  let inserted;
+  try {
+    inserted = await db.get(
+      "INSERT INTO users (name,email,password_hash,phone,phone_public,role) VALUES (?,?,?,?,?,'User') RETURNING user_id",
+      [name.trim(), mail, await bcrypt.hash(password, 10), normalizedPhone, phonePublic ? 1 : 0],
+    );
+  } catch (error) {
+    if (error.code === '23505' || error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ message: 'อีเมลนี้ถูกใช้งานแล้ว' });
+    }
+    throw error;
+  }
+  const user = { user_id: inserted.user_id, name: name.trim(), role: 'User' };
   res.status(201).json({ token: sign(user), user });
 };
 
-exports.login = (req, res) => {
-  const { email, password } = req.body;
-  const u = db.prepare('SELECT * FROM users WHERE email=?').get((email || '').trim().toLowerCase());
-  if (!u || !bcrypt.compareSync(password || '', u.password_hash))
+exports.login = async (req, res) => {
+  const { email, password } = req.body || {};
+  const u = await db.get('SELECT * FROM users WHERE email=?', [(email || '').trim().toLowerCase()]);
+  if (!u || !(await bcrypt.compare(password || '', u.password_hash)))
     return res.status(401).json({ message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' });
   res.json({ token: sign(u), user: { user_id: u.user_id, name: u.name, role: u.role } });
 };
 
-exports.me = (req, res) => {
-  const u = db.prepare('SELECT user_id,name,email,phone,phone_public,role FROM users WHERE user_id=?').get(req.user.user_id);
+exports.me = async (req, res) => {
+  const u = await db.get('SELECT user_id,name,email,phone,phone_public,role FROM users WHERE user_id=?', [req.user.user_id]);
   u ? res.json(u) : res.status(404).json({ message: 'ไม่พบผู้ใช้' });
 };
 
-exports.updatePhoneVisibility = (req, res) => {
+exports.updatePhoneVisibility = async (req, res) => {
   const phonePublic = req.body?.phone_public;
   if (typeof phonePublic !== 'boolean')
     return res.status(400).json({ message: 'ค่าการแสดงเบอร์โทรไม่ถูกต้อง' });
-  const result = db.prepare('UPDATE users SET phone_public=? WHERE user_id=?')
-    .run(phonePublic ? 1 : 0, req.user.user_id);
+  const result = await db.run('UPDATE users SET phone_public=? WHERE user_id=?', [phonePublic ? 1 : 0, req.user.user_id]);
   if (!result.changes) return res.status(404).json({ message: 'ไม่พบผู้ใช้' });
   res.json({ phone_public: phonePublic ? 1 : 0 });
 };

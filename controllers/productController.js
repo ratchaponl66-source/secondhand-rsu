@@ -1,6 +1,5 @@
-const fs = require('fs');
-const path = require('path');
 const db = require('../config/db');
+const { removeUpload, saveUpload } = require('../config/uploads');
 
 const SELECT = `
   SELECT p.product_id, p.title, p.price, p.description, p.status, p.created_at, p.image_url,
@@ -12,92 +11,112 @@ const SELECT = `
   JOIN users u ON u.user_id = p.user_id
   JOIN categories c ON c.category_id = p.category_id`;
 
-const canModify = (req, p) => req.user.role === 'Admin' || p.user_id === req.user.user_id;
+const canModify = (req, product) => req.user.role === 'Admin' || product.user_id === req.user.user_id;
 
-function removeImage(url) {
-  if (!url) return;
-  fs.unlink(path.join(__dirname, '..', 'public', url), () => {});
-}
+exports.categories = async (_req, res) =>
+  res.json(await db.all('SELECT * FROM categories ORDER BY category_id'));
 
-exports.categories = (_req, res) => res.json(db.prepare('SELECT * FROM categories ORDER BY category_id').all());
-
-// Guest: เห็นเฉพาะรายการที่ Admin อนุมัติแล้ว
-exports.list = (req, res) => {
+exports.list = async (req, res) => {
   const { q, category, status } = req.query;
   const where = ['p.is_approved = 1'];
   const params = [];
-  if (q) { where.push('(p.title LIKE ? OR p.description LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  if (q) {
+    where.push('(LOWER(p.title) LIKE LOWER(?) OR LOWER(p.description) LIKE LOWER(?))');
+    params.push(`%${q}%`, `%${q}%`);
+  }
   if (category) { where.push('p.category_id = ?'); params.push(category); }
   if (status) { where.push('p.status = ?'); params.push(status); }
-  res.json(db.prepare(`${SELECT} WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC`).all(...params));
+  res.json(await db.all(`${SELECT} WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC`, params));
 };
 
-exports.mine = (req, res) =>
-  res.json(db.prepare(`${SELECT} WHERE p.user_id = ? ORDER BY p.created_at DESC`).all(req.user.user_id));
+exports.mine = async (req, res) =>
+  res.json(await db.all(`${SELECT} WHERE p.user_id = ? ORDER BY p.created_at DESC`, [req.user.user_id]));
 
-exports.get = (req, res) => {
-  const p = db.prepare(`${SELECT} WHERE p.product_id = ?`).get(req.params.id);
-  if (!p) return res.status(404).json({ message: 'ไม่พบสินค้า' });
-  const owner = req.user && (req.user.role === 'Admin' || req.user.user_id === p.user_id);
-  if (!p.is_approved && !owner) return res.status(404).json({ message: 'ไม่พบสินค้า' });
-  res.json(p);
+exports.get = async (req, res) => {
+  const product = await db.get(`${SELECT} WHERE p.product_id = ?`, [req.params.id]);
+  if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+  const owner = req.user && (req.user.role === 'Admin' || req.user.user_id === product.user_id);
+  if (!product.is_approved && !owner) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+  res.json(product);
 };
 
-exports.create = (req, res) => {
+exports.create = async (req, res) => {
   const { title, price, description, category_id, contact_phone } = req.body;
   if (!title || price === undefined || !category_id)
     return res.status(400).json({ message: 'กรอกชื่อสินค้า ราคา และหมวดหมู่ให้ครบ' });
   if (isNaN(price) || Number(price) < 0) return res.status(400).json({ message: 'ราคาไม่ถูกต้อง' });
-  if (!db.prepare('SELECT 1 FROM categories WHERE category_id=?').get(category_id))
+  if (!await db.get('SELECT 1 FROM categories WHERE category_id=?', [category_id]))
     return res.status(400).json({ message: 'ไม่พบหมวดหมู่ที่เลือก' });
+
   const isAdmin = req.user.role === 'Admin';
-  const info = db
-    .prepare(`INSERT INTO products (user_id,title,price,description,category_id,image_url,contact_phone,is_approved)
-              VALUES (?,?,?,?,?,?,?,?)`)
-    .run(req.user.user_id, title.trim(), Number(price), description || '', category_id,
-         req.file ? '/uploads/' + req.file.filename : null, contact_phone || null, isAdmin ? 1 : 0);
-  res.status(201).json({
-    product_id: info.lastInsertRowid,
-    message: isAdmin ? 'ลงประกาศแล้ว' : 'ส่งประกาศแล้ว รอ Admin อนุมัติก่อนแสดงบนหน้าตลาด',
-  });
+  const imageUrl = req.file ? await saveUpload(req.file) : null;
+  try {
+    const product = await db.get(`
+      INSERT INTO products (user_id,title,price,description,category_id,image_url,contact_phone,is_approved)
+      VALUES (?,?,?,?,?,?,?,?)
+      RETURNING product_id
+    `, [
+      req.user.user_id, title.trim(), Number(price), description || '', category_id,
+      imageUrl, contact_phone || null, isAdmin ? 1 : 0,
+    ]);
+    res.status(201).json({
+      product_id: product.product_id,
+      message: isAdmin ? 'ลงประกาศแล้ว' : 'ส่งประกาศแล้ว รอ Admin อนุมัติก่อนแสดงบนหน้าตลาด',
+    });
+  } catch (error) {
+    if (imageUrl) await removeUpload(imageUrl);
+    throw error;
+  }
 };
 
-exports.update = (req, res) => {
-  const p = db.prepare('SELECT * FROM products WHERE product_id=?').get(req.params.id);
-  if (!p) return res.status(404).json({ message: 'ไม่พบสินค้า' });
-  if (!canModify(req, p)) return res.status(403).json({ message: 'แก้ไขได้เฉพาะประกาศของตัวเอง' });
+exports.update = async (req, res) => {
+  const product = await db.get('SELECT * FROM products WHERE product_id=?', [req.params.id]);
+  if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+  if (!canModify(req, product)) return res.status(403).json({ message: 'แก้ไขได้เฉพาะประกาศของตัวเอง' });
   const { title, price, description, category_id, contact_phone } = req.body;
   if (title !== undefined && (typeof title !== 'string' || !title.trim()))
     return res.status(400).json({ message: 'ชื่อสินค้าต้องไม่เว้นว่าง' });
   if (price !== undefined && (String(price).trim() === '' || !Number.isFinite(Number(price)) || Number(price) < 0))
     return res.status(400).json({ message: 'ราคาไม่ถูกต้อง' });
-  if (category_id !== undefined && !db.prepare('SELECT 1 FROM categories WHERE category_id=?').get(category_id))
+  if (category_id !== undefined && !await db.get('SELECT 1 FROM categories WHERE category_id=?', [category_id]))
     return res.status(400).json({ message: 'ไม่พบหมวดหมู่ที่เลือก' });
-  const image = req.file ? '/uploads/' + req.file.filename : p.image_url;
-  db.prepare(`UPDATE products SET title=?, price=?, description=?, category_id=?, contact_phone=?, image_url=?
-              WHERE product_id=?`)
-    .run(title === undefined ? p.title : title.trim(), price === undefined ? p.price : Number(price),
-         description ?? p.description, category_id ?? p.category_id,
-         contact_phone ?? p.contact_phone, image, p.product_id);
-  if (req.file) removeImage(p.image_url);
+
+  const imageUrl = req.file ? await saveUpload(req.file) : product.image_url;
+  try {
+    await db.run(`UPDATE products
+      SET title=?, price=?, description=?, category_id=?, contact_phone=?, image_url=?
+      WHERE product_id=?`, [
+      title === undefined ? product.title : title.trim(),
+      price === undefined ? product.price : Number(price),
+      description ?? product.description,
+      category_id ?? product.category_id,
+      contact_phone ?? product.contact_phone,
+      imageUrl,
+      product.product_id,
+    ]);
+  } catch (error) {
+    if (req.file && imageUrl) await removeUpload(imageUrl);
+    throw error;
+  }
+  if (req.file && product.image_url) await removeUpload(product.image_url);
   res.json({ message: 'อัปเดตประกาศแล้ว' });
 };
 
-exports.setStatus = (req, res) => {
-  const p = db.prepare('SELECT * FROM products WHERE product_id=?').get(req.params.id);
-  if (!p) return res.status(404).json({ message: 'ไม่พบสินค้า' });
-  if (!canModify(req, p)) return res.status(403).json({ message: 'เปลี่ยนสถานะได้เฉพาะประกาศของตัวเอง' });
-  const status = req.body.status || (p.status === 'Available' ? 'Sold' : 'Available');
+exports.setStatus = async (req, res) => {
+  const product = await db.get('SELECT * FROM products WHERE product_id=?', [req.params.id]);
+  if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+  if (!canModify(req, product)) return res.status(403).json({ message: 'เปลี่ยนสถานะได้เฉพาะประกาศของตัวเอง' });
+  const status = req.body.status || (product.status === 'Available' ? 'Sold' : 'Available');
   if (!['Available', 'Sold'].includes(status)) return res.status(400).json({ message: 'สถานะไม่ถูกต้อง' });
-  db.prepare('UPDATE products SET status=? WHERE product_id=?').run(status, p.product_id);
+  await db.run('UPDATE products SET status=? WHERE product_id=?', [status, product.product_id]);
   res.json({ status });
 };
 
-exports.remove = (req, res) => {
-  const p = db.prepare('SELECT * FROM products WHERE product_id=?').get(req.params.id);
-  if (!p) return res.status(404).json({ message: 'ไม่พบสินค้า' });
-  if (!canModify(req, p)) return res.status(403).json({ message: 'ลบได้เฉพาะประกาศของตัวเอง' });
-  db.prepare('DELETE FROM products WHERE product_id=?').run(p.product_id);
-  removeImage(p.image_url);
+exports.remove = async (req, res) => {
+  const product = await db.get('SELECT * FROM products WHERE product_id=?', [req.params.id]);
+  if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+  if (!canModify(req, product)) return res.status(403).json({ message: 'ลบได้เฉพาะประกาศของตัวเอง' });
+  await db.run('DELETE FROM products WHERE product_id=?', [product.product_id]);
+  if (product.image_url) await removeUpload(product.image_url);
   res.json({ message: 'ลบประกาศแล้ว' });
 };

@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "app.js": {
+      "maxDuration": 30,
+      "includeFiles": "config/*.sql"
+    }
+  }
+}

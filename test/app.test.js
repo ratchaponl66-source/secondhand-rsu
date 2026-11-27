@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const bcrypt = require('bcryptjs');
+const Database = require('better-sqlite3');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const fs = require('node:fs');
@@ -12,6 +15,7 @@ let baseUrl;
 let databaseDir;
 let server;
 let serverOutput = '';
+let databasePath;
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -40,14 +44,17 @@ async function responseJson(response) {
 
 before(async () => {
   databaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'secondhand-rsu-test-'));
+  databasePath = path.join(databaseDir, 'test.db');
   const port = await freePort();
   baseUrl = `http://127.0.0.1:${port}`;
   server = spawn(process.execPath, [path.join(root, 'server.js')], {
     cwd: root,
     env: {
       ...process.env,
-      DB_PATH: path.join(databaseDir, 'test.db'),
-      JWT_SECRET: 'integration-test-secret-only',
+      NODE_ENV: 'test',
+      DB_PATH: databasePath,
+      UPLOAD_DIR: path.join(databaseDir, 'uploads'),
+      JWT_SECRET: crypto.randomBytes(32).toString('hex'),
       PORT: String(port),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -58,8 +65,14 @@ before(async () => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (server.exitCode !== null) throw new Error(`Server exited during startup:\n${serverOutput}`);
     try {
-      const response = await fetch(baseUrl);
-      if (response.ok) return;
+      const response = await fetch(`${baseUrl}/api/health`);
+      if (response.ok) {
+        const testDb = new Database(databasePath);
+        testDb.prepare('INSERT INTO users (name,email,password_hash,phone,role) VALUES (?,?,?,?,?)')
+          .run('Test Admin', 'admin@rsu.ac.th', bcrypt.hashSync('integration-admin-password', 10), '0800000000', 'Admin');
+        testDb.close();
+        return;
+      }
     } catch { /* Retry until the server is listening. */ }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -162,7 +175,7 @@ test('registration, listings, chat, admin actions, categories, and uploads work 
 
   const login = await call('/api/auth/login', {
     method: 'POST',
-    json: { email: 'admin@rsu.ac.th', password: 'Admin@1234' },
+    json: { email: 'admin@rsu.ac.th', password: 'integration-admin-password' },
   });
   assert.equal(login.status, 200);
   const adminToken = (await responseJson(login)).token;
@@ -349,8 +362,9 @@ test('registration, listings, chat, admin actions, categories, and uploads work 
   const uploadedProductId = (await responseJson(uploaded)).product_id;
   const uploadedMine = await responseJson(await call('/api/products/mine', { token: userToken }));
   const imageUrl = uploadedMine.find((product) => product.product_id === uploadedProductId).image_url;
-  const imagePath = path.join(root, 'public', imageUrl.replace(/^\/+/, ''));
+  const imagePath = path.join(databaseDir, 'uploads', path.basename(imageUrl));
   assert.ok(fs.existsSync(imagePath));
+  assert.equal((await fetch(`${baseUrl}${imageUrl}`)).status, 200);
 
   const invalidUpload = new FormData();
   invalidUpload.set('title', 'Invalid image');
@@ -391,5 +405,6 @@ test('registration, listings, chat, admin actions, categories, and uploads work 
     token: adminToken,
   })).status, 200);
   assert.equal(fs.existsSync(imagePath), false);
+  assert.equal((await fetch(`${baseUrl}${imageUrl}`)).status, 404);
   assert.equal((await call(`/api/products/${uploadedProductId}`)).status, 404);
 });

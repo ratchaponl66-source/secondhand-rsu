@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const Database = require('better-sqlite3');
 
 const demoDbPath = process.env.DEMO_DB_PATH;
 if (!demoDbPath) throw new Error('กำหนด DEMO_DB_PATH ให้ชัดเจนก่อน seed เพื่อป้องกันการแก้ฐานข้อมูลผิดไฟล์');
@@ -10,7 +11,6 @@ const adminPassword = process.env.DEMO_ADMIN_PASSWORD || '';
 const userPassword = process.env.DEMO_USER_PASSWORD || '';
 for (const [label, password] of [['DEMO_ADMIN_PASSWORD', adminPassword], ['DEMO_USER_PASSWORD', userPassword]]) {
   if (password.length < 14) throw new Error(`${label} ต้องมีอย่างน้อย 14 ตัวอักษร`);
-  if (password === 'Admin@1234') throw new Error(`${label} ห้ามใช้รหัสผ่านเริ่มต้น`);
 }
 if (adminPassword === userPassword) throw new Error('รหัสผ่าน Admin และ User ต้องไม่ซ้ำกัน');
 
@@ -21,8 +21,13 @@ const samePath = process.platform === 'win32'
   : resolvedDbPath === applicationDbPath;
 if (samePath) throw new Error('ใช้ไฟล์ฐานข้อมูลแยกสำหรับสาธิต ห้าม seed ทับ secondhand.db ของแอป');
 fs.mkdirSync(path.dirname(resolvedDbPath), { recursive: true });
-process.env.DB_PATH = resolvedDbPath;
-const db = require('../config/db');
+const db = new Database(resolvedDbPath);
+db.pragma('foreign_keys = ON');
+db.exec(fs.readFileSync(path.join(__dirname, '..', 'config', 'schema.sqlite.sql'), 'utf8'));
+const userColumns = db.pragma('table_info(users)');
+if (!userColumns.some((column) => column.name === 'phone_public')) {
+  db.exec('ALTER TABLE users ADD COLUMN phone_public INTEGER NOT NULL DEFAULT 0 CHECK (phone_public IN (0, 1))');
+}
 
 const categories = ['หนังสือ', 'อุปกรณ์ IT', 'เสื้อผ้า', 'ของใช้หอพัก'];
 const account = db.prepare('SELECT user_id, role FROM users WHERE email=?');
@@ -154,6 +159,7 @@ const seed = db.transaction(() => {
 });
 
 const seeded = seed();
+db.close();
 console.log(`Demo data ready in ${resolvedDbPath}`);
 console.log(`Admin: admin@rsu.ac.th (password supplied through DEMO_ADMIN_PASSWORD) [user_id=${seeded.adminId}]`);
 console.log(`User: demo.seller@rsu.ac.th (password supplied through DEMO_USER_PASSWORD) [user_id=${seeded.sellerId}]`);
